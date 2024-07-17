@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rogue Clone</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            line-height: 1;
+        }
+        #game {
+            white-space: pre;
+            margin-bottom: 10px;
+            font-size: 30px;
+            line-height: 1;
+        }
+        #stats, #inventory, #message {
+            white-space: pre;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        .highlight {
+            background-color: #fff;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="game"></div>
+    <div id="stats"></div>
+    <div id="inventory"></div>
+    <div id="message"></div>
+    <script>
+        const width = 41;
+        const height = 21;
+        let map = [];
+        let playerX = 1;
+        let playerY = 1;
+        let level = 1;
+
+        const tiles = {
+            player: { char: '@', color: '#00ffff' },
+            wall: { char: '█', color: '#808080' },
+            floor: { char: '.', color: '#8b4513' },
+            upStairs: { char: '<', color: '#ffd700' },
+            downStairs: { char: '>', color: '#ffd700' },
+            corpse: { char: '҉', color: '#8b0000' }
+        };
+
+        const treasures = [
+            { char: '$', color: '#ffd700' },
+            { char: '&', color: '#c0c0c0' },
+            { char: '*', color: '#e6e6fa' },
+            { char: '!', color: '#ff69b4' }
+        ];
+
+        const enemies = [
+            { char: 'g', name: 'Goblin', hp: 5, attack: 2, xpReward: 3, color: '#90ee90' },
+            { char: 'o', name: 'Orc', hp: 10, attack: 3, xpReward: 5, color: '#32cd32' },
+            { char: 'T', name: 'Troll', hp: 15, attack: 4, xpReward: 8, color: '#006400' },
+            { char: 'D', name: 'Dragon', hp: 30, attack: 6, xpReward: 15, color: '#ff4500' }
+        ];
+
+        const npcs = [
+            { char: '☺', color: '#ffff00', dialogue: ["Hello, fellow prisoner!", "I've heard there's a secret passage somewhere in the dungeon."] },
+            { char: '☻', color: '#ffa500', dialogue: ["The dragon guards a powerful artifact.", "Be careful of the trolls, they're stronger than they look."] },
+            { char: '@', color: '#00ff00', dialogue: ["I used to be an adventurer like you.", "Then I took an arrow to the knee."] }
+        ];
+
+        let playerStats = {
+            hp: 20,
+            maxHp: 20,
+            attack: 5,
+            xp: 0,
+            level: 1,
+            xpToNextLevel: 10,
+            gold: 0
+        };
+
+        let inventory = [];
+        let gameEntities = [];
+        let inventoryMode = false;
+        let inventoryIndex = 0;
+
+        function showIntro() {
+            const intro = `
+You are a brave adventurer who fell in love with the princess.
+Your attempts to woo her were discovered by the king, who,
+enraged by your audacity, threw you into the dungeon.
+
+Rumors speak of a secret passage within the dungeon that leads
+back into the palace. This is your chance to escape and prove
+your worth to the princess!
+
+Use arrow keys to move, 'i' to access inventory, and bump into
+NPCs to talk to them. Good luck!
+
+Press any key to start...`;
+            
+            document.getElementById('message').textContent = intro;
+            
+            function startGame(event) {
+                document.removeEventListener('keydown', startGame);
+                document.getElementById('message').textContent = '';
+                createMap();
+                drawMap();
+            }
+            
+            document.addEventListener('keydown', startGame);
+        }
+
+        function createMap() {
+            map = [];
+            gameEntities = [];
+            for (let y = 0; y < height; y++) {
+                map[y] = [];
+                for (let x = 0; x < width; x++) {
+                    map[y][x] = tiles.wall;
+                }
+            }
+
+            generateMaze(1, 1);
+            applyRandomOpenSpaces();
+
+            map[1][1] = tiles.upStairs;
+            map[height - 2][width - 2] = tiles.downStairs;
+
+            for (let i = 0; i < level + 2; i++) {
+                addRandomEntity(treasures);
+                addRandomEnemy();
+            }
+
+            for (let i = 0; i < level; i++) {
+                addRandomNPC();
+            }
+        }
+
+        function generateMaze(x, y) {
+            const directions = [
+                [0, -2], [2, 0], [0, 2], [-2, 0]
+            ].sort(() => Math.random() - 0.5);
+
+            map[y][x] = tiles.floor;
+
+            for (const [dx, dy] of directions) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny][nx] === tiles.wall) {
+                    map[y + dy/2][x + dx/2] = tiles.floor;
+                    generateMaze(nx, ny);
+                }
+            }
+        }
+
+        function applyRandomOpenSpaces() {
+            const numOpenSpaces = Math.floor((width * height) / 20);
+
+            for (let i = 0; i < numOpenSpaces; i++) {
+                const centerX = Math.floor(Math.random() * (width - 4)) + 2;
+                const centerY = Math.floor(Math.random() * (height - 4)) + 2;
+                const radius = Math.floor(Math.random() * 2) + 2;
+
+                for (let y = centerY - radius; y <= centerY + radius; y++) {
+                    for (let x = centerX - radius; x <= centerX + radius; x++) {
+                        if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+                            map[y][x] = tiles.floor;
+                        }
+                    }
+                }
+            }
+        }
+
+        function addRandomEntity(entityArray) {
+            let x, y;
+            do {
+                x = Math.floor(Math.random() * (width - 2)) + 1;
+                y = Math.floor(Math.random() * (height - 2)) + 1;
+            } while (map[y][x] !== tiles.floor);
+            map[y][x] = entityArray[Math.floor(Math.random() * entityArray.length)];
+        }
+
+        function addRandomEnemy() {
+            let x, y;
+            do {
+                x = Math.floor(Math.random() * (width - 2)) + 1;
+                y = Math.floor(Math.random() * (height - 2)) + 1;
+            } while (map[y][x] !== tiles.floor);
+            const enemy = {...enemies[Math.floor(Math.random() * enemies.length)]};
+            enemy.x = x;
+            enemy.y = y;
+            gameEntities.push(enemy);
+            map[y][x] = enemy;
+        }
+
+        function addRandomNPC() {
+            let x, y;
+            do {
+                x = Math.floor(Math.random() * (width - 2)) + 1;
+                y = Math.floor(Math.random() * (height - 2)) + 1;
+            } while (map[y][x] !== tiles.floor);
+            const npc = {...npcs[Math.floor(Math.random() * npcs.length)], x, y};
+            gameEntities.push(npc);
+            map[y][x] = npc;
+        }
+
+        function drawMap() {
+            let display = '';
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const tile = (x === playerX && y === playerY) ? tiles.player : map[y][x];
+                    display += `<span style="color:${tile.color}">${tile.char}</span>`;
+                }
+                display += '\n';
+            }
+            document.getElementById('game').innerHTML = `<div style="font-size: 18px;">Level: ${level}</div>` + display;
+            document.getElementById('stats').textContent = `HP: ${playerStats.hp}/${playerStats.maxHp} | Attack: ${playerStats.attack} | XP: ${playerStats.xp}/${playerStats.xpToNextLevel} | Level: ${playerStats.level} | Gold: ${playerStats.gold}`;
+            drawInventory();
+        }
+
+        function drawInventory() {
+            let inventoryDisplay = 'Inventory: ';
+            for (let i = 0; i < inventory.length; i++) {
+                const item = inventory[i];
+                if (inventoryMode && i === inventoryIndex) {
+                    inventoryDisplay += `<span class="highlight" style="color:${item.color}">${item.char}</span>`;
+                } else {
+                    inventoryDisplay += `<span style="color:${item.color}">${item.char}</span>`;
+                }
+                if (i < inventory.length - 1) inventoryDisplay += ', ';
+            }
+            document.getElementById('inventory').innerHTML = inventoryDisplay;
+        }
+
+        function movePlayer(dx, dy) {
+            const newX = playerX + dx;
+            const newY = playerY + dy;
+
+            if (map[newY][newX] !== tiles.wall) {
+                const entity = gameEntities.find(e => e.x === newX && e.y === newY);
+                if (entity) {
+                    if (entity.dialogue) {
+                        talkToNPC(entity);
+                    } else {
+                        combat(entity);
+                    }
+                } else {
+                    if (map[newY][newX] === tiles.downStairs) {
+                        level++;
+                        createMap();
+                        playerX = 1;
+                        playerY = 1;
+                    } else if (map[newY][newX] === tiles.upStairs) {
+                        if (level === 1) {
+                            document.getElementById('message').textContent = "The King's soldiers have barred the way. Maybe there is a way out through the dungeon.";
+                        } else {
+                            level--;
+                            createMap();
+                            playerX = width - 2;
+                            playerY = height - 2;
+                        }
+                    } else {
+                        playerX = newX;
+                        playerY = newY;
+                        if (treasures.some(t => t.char === map[newY][newX].char)) {
+                            collectTreasure(map[newY][newX]);
+                        }
+                    }
+                }
+            }
+            moveEnemies();
+            drawMap();
+        }
+
+        function talkToNPC(npc) {
+            const message = npc.dialogue[Math.floor(Math.random() * npc.dialogue.length)];
+            document.getElementById('message').textContent = `${npc.char}: ${message}`;
+        }
+
+        function combat(enemy) {
+            enemy.hp -= playerStats.attack;
+            if (enemy.hp <= 0) {
+                gameEntities = gameEntities.filter(e => e !== enemy);
+                map[enemy.y][enemy.x] = tiles.corpse;
+                gainExperience(enemy.xpReward);
+            } else {
+                playerStats.hp -= enemy.attack;
+                if (playerStats.hp <= 0) {
+                    alert('Game Over!');
+                    location.reload();
+                }
+            }
+        }
+
+        function gainExperience(xp) {
+            playerStats.xp += xp;
+            while (playerStats.xp >= playerStats.xpToNextLevel) {
+                levelUp();
+            }
+        }
+
+        function levelUp() {
+            playerStats.level++;
+            playerStats.xp -= playerStats.xpToNextLevel;
+            playerStats.xpToNextLevel = Math.floor(playerStats.xpToNextLevel * 1.5);
+            playerStats.maxHp += 5;
+            playerStats.hp = playerStats.maxHp;
+            playerStats.attack += 1;
+            alert(`Level up! You are now level ${playerStats.level}`);
+        }
+
+        function collectTreasure(item) {
+            inventory.push(item);
+            map[playerY][playerX] = tiles.floor;
+        }
+
+        function useItem(item) {
+            switch(item.char) {
+                case '$':
+                    const goldAmount = Math.floor(Math.random() * 10) + 1;
+                    playerStats.gold += goldAmount;
+                    alert(`You found ${goldAmount} gold!`);
+                    break;
+                case '!':
+                    const healAmount = 5;
+                    playerStats.hp = Math.min(playerStats.hp + healAmount, playerStats.maxHp);
+                    alert(`You restored ${healAmount} HP!`);
+                    break;
+                case '*':
+                case '&':
+                    alert("This item doesn't do anything yet.");
+                    return; // Don't remove the item from inventory
+            }
+            inventory.splice(inventoryIndex, 1);
+            if (inventory.length === 0) {
+                inventoryMode = false;
+            } else {
+                inventoryIndex = Math.min(inventoryIndex, inventory.length - 1);
+            }
+        }
+
+        function moveEnemies() {
+            for (let enemy of gameEntities) {
+                if (!enemy.dialogue) {  // Only move enemies, not NPCs
+                    const dx = Math.floor(Math.random() * 3) - 1;
+                    const dy = Math.floor(Math.random() * 3) - 1;
+                    const newX = enemy.x + dx;
+                    const newY = enemy.y + dy;
+
+                    if (map[newY][newX] === tiles.floor) {
+                        map[enemy.y][enemy.x] = tiles.floor;
+                        enemy.x = newX;
+                        enemy.y = newY;
+                        map[newY][newX] = enemy;
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('keydown', (event) => {
+            document.getElementById('message').textContent = '';
+            if (inventoryMode) {
+                switch (event.key) {
+                    case 'ArrowLeft':
+                        inventoryIndex = Math.max(0, inventoryIndex - 1);
+                        break;
+                    case 'ArrowRight':
+                        inventoryIndex = Math.min(inventory.length - 1, inventoryIndex + 1);
+                        break;
+                    case 'Enter':
+                        if (inventory.length > 0) useItem(inventory[inventoryIndex]);
+                        break;
+                    case 'i':
+                    case 'Escape':
+                        inventoryMode = false;
+                        break;
+                }
+            } else {
+                switch (event.key) {
+                    case 'ArrowUp': movePlayer(0, -1); break;
+case 'ArrowDown': movePlayer(0, 1); break;
+                    case 'ArrowLeft': movePlayer(-1, 0); break;
+                    case 'ArrowRight': movePlayer(1, 0); break;
+                    case 'i':
+                        if (inventory.length > 0) {
+                            inventoryMode = true;
+                            inventoryIndex = 0;
+                        }
+                        break;
+                }
+            }
+            drawMap();
+        });
+
+        showIntro();
+    </script>
+</body>
+</html>
